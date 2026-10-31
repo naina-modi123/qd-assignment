@@ -1,6 +1,31 @@
-# Starter file. Add your own services (your app, Postgres) next to payswift. Leave payswift as it is.
+
 services:
   payswift:
     build: ./payswift
     ports:
       - "8081:8081"
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PAYSWIFT_BASE_URL: http://payswift:8081
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/riderdesk
+    depends_on:
+      - payswift
+      - db
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: riderdesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
