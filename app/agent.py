@@ -136,20 +136,19 @@ import re
 
 
 def analyze_message(rider_id, message, received_at):
+    # Check trip-related disputes first.
     trip_ids = re.findall(r"\bT\d+\b", message.upper())
 
     if trip_ids:
         result = check_trip_dispute(
-            rider_id,
-            trip_ids[0],
-            received_at
+            rider_id, trip_ids[0], received_at
         )
 
         if result["status"] == "shortfall_found":
             return {
                 "reply": (
                     f"We verified a missing payment of "
-                    f"₹{result['amount']} for trip {trip_ids[0]}."
+                    f"INR {result['amount']} for trip {trip_ids[0]}."
                 ),
                 "verified_amount": result["amount"],
                 "reason": result["reason"],
@@ -157,26 +156,54 @@ def analyze_message(rider_id, message, received_at):
             }
 
         return {
-            "reply": result.get(
-                "reason",
-                "We could not verify a missing payment for this trip."
-            ),
+            "reply": result["reason"],
             "verified_amount": 0,
-            "reason": result.get("reason", "No shortfall verified."),
+            "reason": result["reason"],
+            "status": result["status"],
+        }
+
+    # Check daily incentive disputes.
+    if "incentive" in message.lower():
+        dates = re.findall(
+            r"\b\d{4}-\d{2}-\d{2}\b", message
+        )
+
+        if not dates:
+            return {
+                "reply": (
+                    "Please share the date of the missing "
+                    "incentive in YYYY-MM-DD format."
+                ),
+                "verified_amount": 0,
+                "reason": "Incentive dispute requires a date.",
+                "status": "needs_clarification",
+            }
+
+        target_date = dates[0]
+        result = check_incentive_dispute(
+            rider_id, target_date, received_at
+        )
+
+        return {
+            "reply": (
+                f"Verified missing incentive: INR {result['amount']}."
+                if result["status"] == "shortfall_found"
+                else result["reason"]
+            ),
+            "verified_amount": result["amount"],
+            "reason": result["reason"],
             "status": result["status"],
         }
 
     return {
         "reply": (
-            "Please share the trip ID or the date of the missing "
-            "payment so I can check your payout."
+            "Please share a trip ID or mention 'incentive' "
+            "with its date in YYYY-MM-DD format."
         ),
         "verified_amount": 0,
         "reason": "More information is needed.",
         "status": "needs_clarification",
     }
-
-
 def process_verified_payout(rider_id, amount, reason, message_id):
     from zoneinfo import ZoneInfo
 
