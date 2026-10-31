@@ -134,6 +134,7 @@ def check_incentive_dispute(rider_id, target_date, received_at):
     }
 import re
 
+
 def check_cancellation_dispute(rider_id, trip_id, received_at):
     trip = find_trip(rider_id, trip_id)
 
@@ -149,8 +150,8 @@ def check_cancellation_dispute(rider_id, trip_id, received_at):
             "status": "not_eligible",
             "amount": 0,
             "reason": (
-                "Only rider-cancelled trips qualify for "
-                "cancellation penalty corrections."
+                "This trip was not cancelled by the rider. "
+                "The rider-cancellation penalty does not apply."
             ),
         }
 
@@ -161,30 +162,31 @@ def check_cancellation_dispute(rider_id, trip_id, received_at):
             "reason": "The cancellation dispute is outside the 7-day window.",
         }
 
-    # Count the penalty for this trip only once, even if the CSV
-    # contains duplicate payout lines.
     matching = payout_lines[
         (payout_lines["rider_id"] == rider_id)
         & (payout_lines["trip_id"] == trip_id)
         & (payout_lines["line_type"] == "cancellation_penalty")
     ]
 
-    paid_penalty = 10 if not matching.empty else 0
-    missing_penalty = max(0, 10 - paid_penalty)
-
-    if missing_penalty > 0:
+    if matching.empty:
         return {
-            "status": "shortfall_found",
-            "amount": missing_penalty,
-            "reason": f"Verified missing cancellation penalty for trip {trip_id}.",
+            "status": "no_penalty_record",
+            "amount": 0,
+            "reason": (
+                "No cancellation penalty deduction was found in the "
+                "payout records. No rider payout is due based on this "
+                "record alone; manual review may be needed."
+            ),
         }
 
     return {
-        "status": "no_shortfall",
+        "status": "penalty_recorded",
         "amount": 0,
-        "reason": f"The cancellation penalty for trip {trip_id} is already recorded.",
+        "reason": (
+            f"A cancellation penalty record exists for trip {trip_id}. "
+            "Please review the recorded deduction if you dispute it."
+        ),
     }
-
 
 def analyze_message(rider_id, message, received_at):
     message_lower = message.lower()
@@ -231,6 +233,7 @@ def analyze_message(rider_id, message, received_at):
                 ),
                 "verified_amount": result["amount"],
                 "reason": result["reason"],
+                "dispute_reference": f"trip:{rider_id}:{trip_ids[0]}",
                 "status": result["status"],
             }
 
@@ -271,6 +274,7 @@ def analyze_message(rider_id, message, received_at):
             ),
             "verified_amount": result["amount"],
             "reason": result["reason"],
+            "dispute_reference": f"incentive:{rider_id}:{target_date}",
             "status": result["status"],
         }
 
@@ -283,7 +287,9 @@ def analyze_message(rider_id, message, received_at):
         "reason": "More information is needed.",
         "status": "needs_clarification",
     }
-def process_verified_payout(rider_id, amount, reason, message_id):
+def process_verified_payout(
+    rider_id, amount, reason, message_id, dispute_reference
+):
     from zoneinfo import ZoneInfo
 
     if amount <= 0:
@@ -345,7 +351,7 @@ def process_verified_payout(rider_id, amount, reason, message_id):
             (
                 item for item in existing_payouts
                 if item.get("rider_id") == rider_id
-                and item.get("reference") == reason
+                and item.get("reference") == dispute_reference
                 and int(item.get("amount", 0)) == int(amount)
                 and item.get("status") == "processed"
             ),
@@ -367,7 +373,7 @@ def process_verified_payout(rider_id, amount, reason, message_id):
         payout = create_payout(
             rider_id=rider_id,
             amount=amount,
-            reference=reason,
+            reference=dispute_reference,
             message_id=message_id,
         )
 

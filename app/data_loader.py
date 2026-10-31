@@ -25,6 +25,8 @@ def get_ist_date(timestamp):
     return dt.tz_convert("Asia/Kolkata").date()
 
 def count_completed_trips(trips, rider_id, target_date):
+    target_date = pd.to_datetime(target_date).date()
+
     rider_trips = trips[
         (trips["rider_id"] == rider_id)
         & (trips["status"] == "completed")

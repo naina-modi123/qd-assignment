@@ -72,6 +72,7 @@ def receive_message(message: RiderMessage):
             amount=result["verified_amount"],
             reason=result.get("reason", "Verified payout dispute"),
             message_id=message.message_id,
+            dispute_reference=result["dispute_reference"],
         )
 
         result["payout_result"] = payout_result
