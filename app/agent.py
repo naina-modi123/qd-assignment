@@ -134,11 +134,90 @@ def check_incentive_dispute(rider_id, target_date, received_at):
     }
 import re
 
+def check_cancellation_dispute(rider_id, trip_id, received_at):
+    trip = find_trip(rider_id, trip_id)
+
+    if trip is None:
+        return {
+            "status": "not_found",
+            "amount": 0,
+            "reason": "Trip not found for this rider.",
+        }
+
+    if trip["status"] != "cancelled_by_rider":
+        return {
+            "status": "not_eligible",
+            "amount": 0,
+            "reason": (
+                "Only rider-cancelled trips qualify for "
+                "cancellation penalty corrections."
+            ),
+        }
+
+    if not is_within_dispute_window(trip["started_at"], received_at):
+        return {
+            "status": "outside_window",
+            "amount": 0,
+            "reason": "The cancellation dispute is outside the 7-day window.",
+        }
+
+    # Count the penalty for this trip only once, even if the CSV
+    # contains duplicate payout lines.
+    matching = payout_lines[
+        (payout_lines["rider_id"] == rider_id)
+        & (payout_lines["trip_id"] == trip_id)
+        & (payout_lines["line_type"] == "cancellation_penalty")
+    ]
+
+    paid_penalty = 10 if not matching.empty else 0
+    missing_penalty = max(0, 10 - paid_penalty)
+
+    if missing_penalty > 0:
+        return {
+            "status": "shortfall_found",
+            "amount": missing_penalty,
+            "reason": f"Verified missing cancellation penalty for trip {trip_id}.",
+        }
+
+    return {
+        "status": "no_shortfall",
+        "amount": 0,
+        "reason": f"The cancellation penalty for trip {trip_id} is already recorded.",
+    }
+
 
 def analyze_message(rider_id, message, received_at):
-    # Check trip-related disputes first.
+    message_lower = message.lower()
+
+    # Extract trip IDs from the message.
     trip_ids = re.findall(r"\bT\d+\b", message.upper())
 
+    # Handle cancellation-related messages first.
+    # Do not automatically pay a rider for a missing penalty record.
+    if "cancel" in message_lower or "penalty" in message_lower:
+        if not trip_ids:
+            return {
+                "reply": (
+                    "Please share the trip ID for the "
+                    "cancellation penalty dispute."
+                ),
+                "verified_amount": 0,
+                "reason": "Cancellation dispute requires a trip ID.",
+                "status": "needs_clarification",
+            }
+
+        result = check_cancellation_dispute(
+            rider_id, trip_ids[0], received_at
+        )
+
+        return {
+            "reply": result["reason"],
+            "verified_amount": 0,
+            "reason": result["reason"],
+            "status": result["status"],
+        }
+
+    # Check completed-trip fare disputes.
     if trip_ids:
         result = check_trip_dispute(
             rider_id, trip_ids[0], received_at
@@ -163,7 +242,7 @@ def analyze_message(rider_id, message, received_at):
         }
 
     # Check daily incentive disputes.
-    if "incentive" in message.lower():
+    if "incentive" in message_lower:
         dates = re.findall(
             r"\b\d{4}-\d{2}-\d{2}\b", message
         )
