@@ -1,4 +1,4 @@
-from app.payswift_client import create_payout
+from app.payswift_client import create_payout, get_rider_payouts
 from datetime import datetime, timezone
 pending_operations = []
 daily_auto_payouts = {}
@@ -254,7 +254,37 @@ def process_verified_payout(rider_id, amount, reason, message_id):
     if amount > 200:
         return queue_approval(reason)
 
+    
     try:
+        # Reconcile against PaySwift's actual ledger first.
+        existing_response = get_rider_payouts(rider_id)
+        existing_payouts = existing_response.get("data", [])
+
+        # A prior payout with the same reference may mean this
+        # dispute was already paid, even after an app restart.
+        matching_payout = next(
+            (
+                item for item in existing_payouts
+                if item.get("rider_id") == rider_id
+                and item.get("reference") == reason
+                and int(item.get("amount", 0)) == int(amount)
+                and item.get("status") == "processed"
+            ),
+            None,
+        )
+
+        if matching_payout:
+            processed_payouts.add(payout_key)
+            return {
+                "status": "already_reconciled",
+                "amount": 0,
+                "payout": matching_payout,
+                "reason": (
+                    "A matching payout already exists in PaySwift. "
+                    "No additional payout was created."
+                ),
+            }
+
         payout = create_payout(
             rider_id=rider_id,
             amount=amount,
@@ -262,7 +292,6 @@ def process_verified_payout(rider_id, amount, reason, message_id):
             message_id=message_id,
         )
 
-        # Record only after the payment succeeds.
         processed_payouts.add(payout_key)
         daily_auto_payouts[daily_key] = amount
 
